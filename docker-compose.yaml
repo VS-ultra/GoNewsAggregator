@@ -4,7 +4,7 @@ services:
   app:
     build: .
     ports:
-      - "8080:80"
+      - "80:80"
     environment:
       - newsdb=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
     depends_on:

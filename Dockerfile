@@ -9,6 +9,7 @@ RUN go mod download
 # Копируем все исходники
 COPY . .
 
+COPY cmd/gonews/config.json /app/config.json
 # Копируем фронтенд в нужное место
 COPY cmd/gonews/webapp /app/webapp
 
@@ -16,3 +17,4 @@ COPY cmd/gonews/webapp /app/webapp
 RUN cd cmd/gonews && go build -o /app/gonewsaggregator .
 
 CMD ["/app/gonewsaggregator"]
+

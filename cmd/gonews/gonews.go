@@ -1,4 +1,3 @@
-// Сервер GoNews.
 package main
 
 import (
@@ -20,63 +19,75 @@ type config struct {
 }
 
 func main() {
-	// инициализация зависимостей приложения
-	db, err := storage.New()
-	if err != nil {
-		log.Fatal(err)
+	// Небольшая начальная пауза, чтобы docker успел поднять сеть
+	time.Sleep(5 * time.Second)
+
+	// --- ждём, пока Postgres будет готов ---
+	var db *storage.DB
+	var err error
+	for i := 0; i < 10; i++ {
+		db, err = storage.New()
+		if err == nil {
+			break
+		}
+		log.Printf("ждём Postgres… попытка %d: %v\n", i+1, err)
+		time.Sleep(5 * time.Second)
 	}
+	if err != nil {
+		log.Fatal("не удалось подключиться к БД после 10 попыток:", err)
+	}
+
+	// инициализируем API
 	api := api.New(db)
 
-	// чтение и раскодирование файла конфигурации
+	// читаем config.json из корня /app (куда его положили в Dockerfile)
 	b, err := ioutil.ReadFile("./config.json")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("конфиг не найден:", err)
 	}
-	var config config
-	err = json.Unmarshal(b, &config)
-	if err != nil {
-		log.Fatal(err)
+	var cfg config
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		log.Fatal("не удалось распарсить config.json:", err)
 	}
 
-	// запуск парсинга новостей в отдельном потоке
-	// для каждой ссылки
+	// каналы для парсинга
 	chPosts := make(chan []storage.Post)
 	chErrs := make(chan error)
-	for _, url := range config.URLS {
-		go parseURL(url, chPosts, chErrs, config.Period)
+	for _, url := range cfg.URLS {
+		go parseURL(url, chPosts, chErrs, cfg.Period)
 	}
 
-	// запись потока новостей в БД
+	// сохраняем в БД
 	go func() {
 		for posts := range chPosts {
-			db.StoreNews(posts)
+			if err := db.StoreNews(posts); err != nil {
+				log.Println("ошибка записи в БД:", err)
+			}
 		}
 	}()
 
-	// обработка потока ошибок
+	// логируем ошибки парсинга
 	go func() {
 		for err := range chErrs {
-			log.Println("ошибка:", err)
+			log.Println("ошибка парсинга RSS:", err)
 		}
 	}()
 
-	// запуск веб-сервера с API и приложением
-	err = http.ListenAndServe(":80", api.Router())
-	if err != nil {
+	// запускаем HTTP-сервер на порту 80
+	log.Println("Server is up and running.")
+	if err := http.ListenAndServe(":80", api.Router()); err != nil {
 		log.Fatal(err)
 	}
 }
 
-// Асинхронное чтение потока RSS. Раскодированные
-// новости и ошибки пишутся в каналы.
 func parseURL(url string, posts chan<- []storage.Post, errs chan<- error, period int) {
 	for {
 		news, err := rss.Parse(url)
 		if err != nil {
 			errs <- err
-			continue
+		} else {
+			posts <- news
 		}
-		posts <- news
-		time.Sleep(time.Minute * time.Duration(period))
+		time.Sleep(time.Duration(period) * time.Minute)
 	}
 }
